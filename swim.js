@@ -50,7 +50,41 @@ function chooseTarget(p,r,env){
  if(species==='puffer'&&r()<.45)p.idle+=range(r,1.6,3.4);
 }
 function gemLayout(gems){const placed=[];for(const gem of gems){let seed=2166136261;for(const c of gem.id)seed=Math.imul(seed^c.charCodeAt(0),16777619)>>>0;const r=()=>((seed=(Math.imul(seed,1664525)+1013904223)>>>0)/4294967296);let best=-1,x=50,bottom=7;for(let k=0;k<20;k++){const nx=range(r,6,92),ny=range(r,5,13);let gap=Infinity;for(const q of placed)gap=Math.min(gap,Math.hypot(nx-q.x,(ny-q.bottom)*3));if(gap>best){best=gap;x=nx;bottom=ny;}}placed.push({x,bottom,size:range(r,20,27),delay:range(r,-3,0)});}return placed;}
+// Mermaid propulsion: one short fin stroke followed by a longer inertial glide.
+// All coordinates are transient visual state; no player/save fields are changed.
+function mermaidStep(p,dt,r,food,env){
+ dt=clamp(dt,0,.05);if(!dt)return p;
+ p.clock+=dt;p.plan-=dt;p.idle=Math.max(0,p.idle-dt);
+ if(p.strokePhase===undefined){p.strokePhase=range(r,0,Math.PI*2);p.strokeRate=range(r,.48,.66);p.cruise=range(r,.019,.027);p.drive=0;p.finAngle=0;p.followAngle=0;p.currentPhase=range(r,0,Math.PI*2);}
+ if(p.plan<=0||Math.hypot(p.tx-p.x,p.ty-p.y)<.075){chooseTarget(p,r,env);p.plan=range(r,12,23);}
+ const tx=food?food.x:p.tx,ty=food?food.y:p.ty,dx=tx-p.x,dy=ty-p.y,d=Math.hypot(dx,dy);
+ const avoidance=separation(p,env),yMax=env&&env.swimYMax?env.swimYMax:.9;
+ const wallX=.055*(Math.max(0,.15-p.x)/.15-Math.max(0,p.x-.84)/.16);
+ const wallY=.055*(Math.max(0,.15-p.y)/.15-Math.max(0,p.y-(yMax-.15))/.15);
+ let aimX=dx/Math.max(.01,d)*p.cruise+avoidance.x*.45+wallX,aimY=dy/Math.max(.01,d)*p.cruise+avoidance.y*.45+wallY;
+ if(p.bearing===undefined)p.bearing=Math.atan2(aimY,aimX);
+ const target=Math.atan2(aimY,aimX),delta=Math.atan2(Math.sin(target-p.bearing),Math.cos(target-p.bearing));
+ p.bearing+=clamp(delta,-dt*.85,dt*.85);
+ p.strokePhase+=dt*Math.PI*2*p.strokeRate*(food?1.15:1);
+ const stroke=Math.pow(Math.max(0,Math.sin(p.strokePhase)),2);
+ const goal=p.cruise*(.78+stroke*.42)*(food?1.25:1)*clamp(d/.16,.45,1);
+ p.drive+=(goal-p.drive)*Math.min(1,dt*(stroke>.25?2.8:.75));
+ const flowX=Math.sin(p.clock*.23+p.currentPhase)*.0012,flowY=Math.sin(p.clock*.31+p.currentPhase)*.0018;
+ let desiredX=Math.cos(p.bearing)*p.drive+flowX+avoidance.x*.30+wallX,desiredY=Math.sin(p.bearing)*p.drive+flowY+avoidance.y*.30+wallY;
+ const speed=Math.hypot(desiredX,desiredY);if(speed>.052){desiredX*=.052/speed;desiredY*=.052/speed;}
+ p.vx+=(desiredX-p.vx)*Math.min(1,dt*1.6);p.vy+=(desiredY-p.vy)*Math.min(1,dt*1.6);
+ p.x=clamp(p.x+p.vx*dt,.035,.94);p.y=clamp(p.y+p.vy*dt,.055,yMax);
+ // Direction hysteresis avoids rapid left/right flips while drifting almost vertically.
+ if(p.vx>.006)p.heading=1;else if(p.vx<-.006)p.heading=-1;
+ p.facing+=(-p.heading-p.facing)*Math.min(1,dt*2.4);
+ const pitch=clamp(Math.atan2(p.vy,Math.max(.012,Math.abs(p.vx)))*180/Math.PI*p.heading*.16,-6,6);
+ p.bank+=(pitch-p.bank)*Math.min(1,dt*.95);
+ p.finAngle=Math.sin(p.strokePhase)*(.65+Math.min(1,Math.hypot(p.vx,p.vy)/.028)*1.25);
+ p.followAngle=Math.sin(p.strokePhase-.7)*.55;
+ p.pose=0;p.wink=false;return p;
+}
 function step(p,dt,r=Math.random,food=null,env=null){
+ if(p.species.includes('mermaid'))return mermaidStep(p,dt,r,food,env);
  dt=clamp(dt,0,.05);if(!dt)return p;p.clock+=dt;p.lookIn-=dt;
  if(p.lookTime>0){p.lookTime=Math.max(0,p.lookTime-dt);if(p.lookTime===0)p.lookIn=range(r,40,90);}
  else if(p.lookIn<=0&&!food){p.lookTime=1.9;p.idle=0;}
